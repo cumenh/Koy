@@ -584,6 +584,120 @@ async function fetchOneCRR(slug) {
       if (ct.includes('json')) {
         const j = await res.json();
         raw = j.contents || j.body || null;
+      } else {
+        raw = await res.text();
+      }
+
+      if (!raw) { lastErr = 'empty'; DBG('SKIP: empty'); continue; }
+      DBG(`HTML length: ${raw.length}`);
+
+      // Try __NEXT_DATA__ first (Next.js SSR — data embedded in page)
+      const ndMatch = raw.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]+?)<\/script>/);
+      if (ndMatch) {
+        DBG(`Found __NEXT_DATA__, parsing...`);
+        try {
+          const nd = JSON.parse(ndMatch[1]);
+          // Log structure to find the right key
+          const pp = nd?.props?.pageProps;
+          DBG(`pageProps keys: ${Object.keys(pp||{}).join(', ')}`);
+
+          // Dump first 1000 chars of pageProps for inspection
+          DBG(`pageProps preview: ${JSON.stringify(pp).substring(0,500)}`);
+
+          // Try common key names for CRR value
+          const item = pp?.item || pp?.itemData || pp?.data || pp?.pageData || pp;
+          DBG(`item keys: ${Object.keys(item||{}).join(', ')}`);
+          DBG(`item preview: ${JSON.stringify(item).substring(0,300)}`);
+
+          // Search recursively for any key containing 'crr' or 'value'
+          function findCRR(obj, depth=0) {
+            if (depth > 5 || !obj || typeof obj !== 'object') return null;
+            for (const [k, v] of Object.entries(obj)) {
+              if (/crr|value|price/i.test(k) && (typeof v === 'number' || typeof v === 'string')) {
+                DBG(`Found key "${k}": ${v}`);
+              }
+              const r = findCRR(v, depth+1);
+              if (r) return r;
+            }
+            return null;
+          }
+          findCRR(nd);
+
+          html = raw;
+          break;
+        } catch(e) {
+          DBG(`__NEXT_DATA__ parse error: ${e.message}`);
+        }
+      } else {
+        DBG(`No __NEXT_DATA__ found`);
+        // Check for text CRR
+        if (raw.includes('Current CRR Value')) {
+          DBG(`Found text 'Current CRR Value'`);
+          html = raw; break;
+        }
+        DBG(`First 300: ${raw.substring(0,300)}`);
+      }
+      lastErr = 'no data found';
+    } catch(e) { lastErr = e.message; DBG(`EXCEPTION: ${e.message}`); }
+  }
+
+  if (!html) {
+    DBG(`FAILED: ${lastErr}`);
+    throw new Error(lastErr);
+  }
+
+  // Try __NEXT_DATA__ extraction
+  const ndMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]+?)<\/script>/);
+  if (ndMatch) {
+    try {
+      const nd = JSON.parse(ndMatch[1]);
+      const pp = nd?.props?.pageProps;
+      // Try to find item data at various paths
+      const item = pp?.item || pp?.itemData || pp?.data || pp;
+
+      // Search for CRR value — try every key
+      function getCRR(obj, depth=0) {
+        if (depth > 6 || !obj || typeof obj !== 'object') return null;
+        for (const [k, v] of Object.entries(obj)) {
+          if (/^(crr|crr_value|crrValue|value|current_value|currentValue)$/i.test(k)) {
+            if (v !== null && v !== undefined) return String(v);
+          }
+          if (typeof v === 'object') {
+            const r = getCRR(v, depth+1);
+            if (r) return r;
+          }
+        }
+        return null;
+      }
+
+      const crr = getCRR(nd);
+      const demand = item?.demand || item?.demandLabel || '';
+      const stability = item?.stability || item?.stabilityLabel || '';
+      DBG(`Extracted CRR: ${crr}, demand: ${demand}`);
+      if (crr) return { crr: String(crr), demand: String(demand), stability: String(stability), obtainable: true };
+    } catch(e) { DBG(`extraction error: ${e.message}`); }
+  }
+
+  // Fallback: text parse
+  const crr = parseCRR(html);
+  DBG(`Text parseCRR: ${crr}`);
+  if (!crr) return null;
+  return { crr, demand: parseDemand(html), stability: parseStability(html), obtainable: true };
+}
+
+  for (let pi = 0; pi < CORS_PROXIES.length; pi++) {
+    const proxyUrl = CORS_PROXIES[pi](slug);
+    DBG(`Proxy ${pi+1}: ${proxyUrl.slice(0,80)}`);
+    try {
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(9000) });
+      DBG(`Status: ${res.status} | CT: ${res.headers.get('content-type')}`);
+      if (!res.ok) { lastErr = 'HTTP '+res.status; DBG('SKIP: not ok'); continue; }
+
+      const ct = res.headers.get('content-type') || '';
+      let raw;
+      if (ct.includes('json')) {
+        const j = await res.json();
+        raw = j.contents || j.body || null;
         DBG(`JSON proxy. contents length: ${raw?.length}`);
       } else {
         raw = await res.text();
