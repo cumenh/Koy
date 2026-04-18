@@ -550,32 +550,54 @@ function parseStability(html) {
 async function fetchOneCRR(slug) {
   let html = null;
   let lastErr = null;
+  const DBG = (msg) => { console.log('[CRR DEBUG]', msg); };
 
-  for (const proxyFn of CORS_PROXIES) {
+  for (let pi = 0; pi < CORS_PROXIES.length; pi++) {
+    const proxyUrl = CORS_PROXIES[pi](slug);
+    DBG(`Proxy ${pi+1}: ${proxyUrl.slice(0,80)}`);
     try {
-      const res = await fetch(proxyFn(slug), { signal: AbortSignal.timeout(9000) });
-      if (!res.ok) { lastErr = 'HTTP ' + res.status; continue; }
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(9000) });
+      DBG(`Status: ${res.status} | CT: ${res.headers.get('content-type')}`);
+      if (!res.ok) { lastErr = 'HTTP '+res.status; DBG('SKIP: not ok'); continue; }
 
       const ct = res.headers.get('content-type') || '';
+      let raw;
       if (ct.includes('json')) {
         const j = await res.json();
-        html = j.contents || j.body || null;
+        raw = j.contents || j.body || null;
+        DBG(`JSON proxy. contents length: ${raw?.length}`);
       } else {
-        html = await res.text();
+        raw = await res.text();
+        DBG(`Text proxy. length: ${raw?.length}`);
       }
 
-      // Validate: must contain our key marker
-      if (!html || !html.includes('Current CRR Value')) {
-        html = null; lastErr = 'marker not found'; continue;
+      if (!raw) { lastErr = 'empty body'; DBG('SKIP: empty'); continue; }
+
+      // Log exactly what we got around "CRR"
+      const crrIdx = raw.indexOf('Current CRR Value');
+      if (crrIdx >= 0) {
+        DBG(`Found 'Current CRR Value' at index ${crrIdx}`);
+        DBG(`Snippet: ${JSON.stringify(raw.slice(crrIdx, crrIdx+80))}`);
+      } else {
+        DBG(`NOT FOUND: 'Current CRR Value'`);
+        DBG(`First 500 chars: ${JSON.stringify(raw.slice(0,500))}`);
+        lastErr = 'marker not found'; continue;
       }
+
+      html = raw;
       break;
-    } catch(e) { lastErr = e.message; continue; }
+    } catch(e) { lastErr = e.message; DBG(`EXCEPTION: ${e.message}`); continue; }
   }
 
-  if (!html) throw new Error('proxies failed: ' + lastErr);
+  if (!html) {
+    DBG(`All proxies failed. lastErr: ${lastErr}`);
+    throw new Error('proxies failed: ' + lastErr);
+  }
 
   const crr = parseCRR(html);
-  if (!crr) return null;
+  DBG(`parseCRR result: ${crr}`);
+
+  if (!crr) { DBG('parseCRR returned null!'); return null; }
 
   return {
     crr,
