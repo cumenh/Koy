@@ -251,11 +251,23 @@ body::before{content:'';position:fixed;top:-50%;left:-50%;width:200%;height:200%
   <div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px">
     <span id="spin" style="display:none" class="spin">↻</span>
     <span id="cd"></span>
+    <button onclick="toggleDebug()" style="background:none;border:1px solid #333;border-radius:4px;color:#555;font-size:9px;padding:2px 5px;cursor:pointer" title="Toggle debug log">🐛</button>
   </div>
 </div>
 
-<!-- TABS -->
-<div class="tabs">
+<!-- DEBUG PANEL — hapus setelah fix -->
+<div id="debug-panel" style="background:#0a0f00;border:1px solid #00ff00;border-radius:8px;padding:10px;margin-bottom:12px;display:none">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+    <span style="color:#00ff00;font-size:11px;font-family:monospace;font-weight:700">🐛 DEBUG LOG</span>
+    <div style="display:flex;gap:6px">
+      <button onclick="document.getElementById('debug-log').textContent=''" style="background:none;border:1px solid #444;border-radius:4px;color:#888;font-size:10px;padding:2px 6px;cursor:pointer">Clear</button>
+      <button onclick="copyDebugLog()" style="background:none;border:1px solid #00ff00;border-radius:4px;color:#00ff00;font-size:10px;padding:2px 6px;cursor:pointer">Copy All</button>
+    </div>
+  </div>
+  <div id="debug-log" style="font-family:monospace;font-size:10px;color:#aaffaa;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.5"></div>
+</div>
+
+
   <div class="tab active" onclick="switchTab('loot')">📦 Loot</div>
   <div class="tab" onclick="switchTab('craft')">⚔️ Craft</div>
   <div class="tab" onclick="switchTab('values')">📊 Values</div>
@@ -550,7 +562,14 @@ function parseStability(html) {
 async function fetchOneCRR(slug) {
   let html = null;
   let lastErr = null;
-  const DBG = (msg) => { console.log('[CRR DEBUG]', msg); };
+  const DBG = (msg) => {
+    const t = new Date().toLocaleTimeString('id-ID');
+    const line = `[${t}] ${msg}`;
+    console.log('[CRR DEBUG]', msg);
+    const el = document.getElementById('debug-log');
+    if (el) { el.textContent += line + '\n'; el.scrollTop = el.scrollHeight; }
+  };
+  DBG(`=== fetchOneCRR: ${slug} ===`);
 
   for (let pi = 0; pi < CORS_PROXIES.length; pi++) {
     const proxyUrl = CORS_PROXIES[pi](slug);
@@ -1008,6 +1027,16 @@ function switchTab(tab){
   if(tab==='values')renderVLGrid();
   if(tab==='shop')renderShop();
   if(tab==='asc')initAscPage();
+}
+
+function toggleDebug() {
+  const p = document.getElementById('debug-panel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+async function copyDebugLog() {
+  const txt = document.getElementById('debug-log').textContent;
+  try { await navigator.clipboard.writeText(txt); showToast('✓ Log di-copy!'); }
+  catch { showToast('Gagal copy log'); }
 }
 
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
